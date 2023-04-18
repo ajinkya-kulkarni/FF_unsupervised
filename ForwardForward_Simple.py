@@ -27,6 +27,8 @@ n_layers = 4
 input_size = 28 * 28
 n_hid_to_log = 3
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 ######################################################################################
 
 def clean_repo():
@@ -478,8 +480,6 @@ if __name__ == '__main__':
 
 	# Create the data loader
 	test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
-
-	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 	unsupervised_ff = unsupervised_ff_init(n_layers=n_layers, bias=True, n_classes=n_classes, n_hid_to_log=n_hid_to_log, device=device, n_neurons=n_neurons, input_size=input_size, n_epochs=epochs)
 
