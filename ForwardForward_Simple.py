@@ -19,7 +19,7 @@ os.system('cls || clear')
 
 ######################################################################################
 
-epochs = 10
+epochs = 50
 batch_size = 64
 n_neurons = 2000
 n_classes = 10
@@ -30,7 +30,9 @@ n_hid_to_log = 3
 ######################################################################################
 
 def clean_repo():
-
+	"""
+	Deletes the 'MNIST' folder and the 'transformed_dataset.pt' file if they exist in the working directory.
+	"""
 	folder_path = "MNIST"
 	if os.path.exists(folder_path):
 		shutil.rmtree(folder_path)
@@ -42,13 +44,17 @@ def clean_repo():
 ######################################################################################
 
 def prepare_data():
-
+	"""
+	Prepares the MNIST dataset by loading it, randomly pairing the images, creating negative images from the pairs,
+	and saving them to 'transformed_dataset.pt' file.
+	"""
 	# Define the transform function
 	transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
 	# Load the train MNIST dataset
 	train_mnist_dataset = torchvision.datasets.MNIST(root="./", train=True, transform=transform, download=True)
 	n_train_samples = len(train_mnist_dataset)
+
 	# Load the test MNIST dataset
 	test_mnist_dataset = torchvision.datasets.MNIST(root="./", train=False, transform=transform, download=True)
 
@@ -59,9 +65,10 @@ def prepare_data():
 		# Transform the data
 		transformed_dataset = [
 			create_negative_image(train_mnist_dataset[pair[0]][0].squeeze(), train_mnist_dataset[pair[1]][0].squeeze())
-			for pair in tqdm(random_pairs, desc = 'Preparing Dataset')]
+			for pair in tqdm(random_pairs, desc='Preparing Dataset')
+		]
 
-		# Save the transformed images to a folder
+		# Save the transformed images to a file
 		torch.save(transformed_dataset, 'transformed_dataset.pt')
 
 ######################################################################################
@@ -83,7 +90,8 @@ def create_mask(shape, iterations: int = 10):
 	numpy.ndarray
 		A binary mask with the specified shape, containing fairly large regions of ones and zeros.
 	"""
-
+	
+	# Define the horizontal and vertical blur filters
 	blur_filter_1 = np.array(((0, 0, 0), (1/4, 1/2, 1/4), (0, 0, 0)))
 	blur_filter_2 = blur_filter_1.T
 
@@ -127,167 +135,315 @@ def create_negative_image(image_1: Tensor, image_2: Tensor):
 		[1 1 0 0 1]])
 	"""
 
+	# Check if the shapes of the input images are the same
 	assert image_1.shape == image_2.shape, "Incompatible images and mask shapes."
 
+	# Create a binary mask
 	mask = create_mask((image_1.shape[0], image_1.shape[1]))
 
+	# Apply the binary mask to the two input images
 	image_1 = torch.mul(image_1, mask)
 	image_2 = torch.mul(image_2, 1 - mask)
 
+	# Combine the masked images to form the negative image
 	return torch.add(image_1, image_2)
 
 ######################################################################################
 
-def goodness_score(pos_acts, neg_acts, threshold=2):
+def goodness_score(pos_acts: Tensor, neg_acts: Tensor, threshold: float = 2.0) -> Tensor:
 	"""
 	Compute the goodness score for a given set of positive and negative activations.
 
 	Parameters:
-
 	pos_acts (torch.Tensor): Numpy array of positive activations.
 	neg_acts (torch.Tensor): Numpy array of negative activations.
-	threshold (int, optional): Threshold value used to compute the score. Default is 2.
+	threshold (float, optional): Threshold value used to compute the score. Default is 2.
 
 	Returns:
-
 	goodness (torch.Tensor): Goodness score computed as the sum of positive and negative goodness values. Note that this
 	score is actually the quantity that is optimized and not the goodness itself. The goodness itself is the same
 	quantity but without the threshold subtraction
 	"""
-
 	pos_goodness = -torch.sum(torch.pow(pos_acts, 2)) + threshold
 	neg_goodness = torch.sum(torch.pow(neg_acts, 2)) - threshold
 	return torch.add(pos_goodness, neg_goodness)
 
 ######################################################################################
 
-def get_metrics(preds, labels):
-    acc = accuracy_score(labels, preds)
-    return dict(accuracy_score=acc)
+def get_metrics(preds: np.ndarray, labels: np.ndarray) -> dict[str, float]:
+	"""
+	Compute the accuracy score for a given set of predicted and actual labels.
 
-def ff_layer_init(in_features, out_features, n_epochs, bias, device):
-    layer = nn.Linear(in_features, out_features, bias=bias)
-    layer.n_epochs = n_epochs
-    layer.opt = torch.optim.Adam(layer.parameters())
-    layer.goodness = goodness_score
-    layer.to(device)
-    layer.ln_layer = nn.LayerNorm(normalized_shape=[1, out_features]).to(device)
-    return layer
+	Parameters:
+	preds (numpy.ndarray): Numpy array of predicted labels.
+	labels (numpy.ndarray): Numpy array of actual labels.
 
-def ff_train(layer, pos_acts, neg_acts, goodness):
-    layer.opt.zero_grad()
-    goodness = goodness(pos_acts, neg_acts)
-    goodness.backward()
-    layer.opt.step()
+	Returns:
+	dict[str, float]: Dictionary containing the accuracy score.
+	"""
+	acc = accuracy_score(labels, preds)
+	return dict(accuracy_score=acc)
 
-def ff_forward(layer, input):
-    input = layer(input)
-    input = layer.ln_layer(input.detach())
-    return input
+######################################################################################
+
+def ff_layer_init(in_features: int, out_features: int, n_epochs: int, bias: bool, device: torch.device) -> nn.Module:
+	"""
+	Initializes a fully connected layer with specified parameters.
+
+	Parameters:
+	in_features (int): Number of input features.
+	out_features (int): Number of output features.
+	n_epochs (int): Number of epochs for training.
+	bias (bool): Whether to use bias or not.
+	device (torch.device): Device to train the layer on.
+
+	Returns:
+	nn.Module: Initialized fully connected layer.
+	"""
+	layer = nn.Linear(in_features, out_features, bias=bias)
+	layer.n_epochs = n_epochs
+	layer.opt = torch.optim.Adam(layer.parameters())
+	layer.goodness = goodness_score
+	layer.to(device)
+	layer.ln_layer = nn.LayerNorm(normalized_shape=[1, out_features]).to(device)
+	return layer
+
+######################################################################################
+
+def ff_train(layer: nn.Module, pos_acts: Tensor, neg_acts: Tensor, goodness) -> None:
+	"""
+	Trains the specified fully connected layer.
+
+	Parameters:
+	layer (nn.Module): Fully connected layer to train.
+	pos_acts (torch.Tensor): Numpy array of positive activations.
+	neg_acts (torch.Tensor): Numpy array of negative activations.
+	goodness: Function used to calculate the goodness score.
+
+	Returns:
+	None
+	"""
+	layer.opt.zero_grad()
+	goodness = goodness(pos_acts, neg_acts)
+	goodness.backward()
+	layer.opt.step()
+
+######################################################################################
+
+def ff_forward(layer: nn.Module, input: Tensor) -> Tensor:
+	"""
+	Calculates forward pass of specified fully connected layer.
+
+	Parameters:
+	layer (nn.Module): Fully connected layer for which to calculate the forward pass.
+	input (torch.Tensor): Input tensor for forward pass.
+
+	Returns:
+	Tensor: Output tensor of forward pass.
+	"""
+	input = layer(input)
+	input = layer.ln_layer(input.detach())
+	return input
+
+######################################################################################
 
 def unsupervised_ff_init(n_layers, bias, n_classes, n_hid_to_log, device, n_neurons, input_size, n_epochs):
-    model = nn.Module()
-    model.n_hid_to_log = n_hid_to_log
-    model.n_epochs = n_epochs
-    model.device = device
+	"""
+	Initialize an unsupervised feed-forward neural network.
 
-    ff_layers = [ff_layer_init(in_features=input_size if idx == 0 else n_neurons,
-                               out_features=n_neurons,
-                               n_epochs=n_epochs,
-                               bias=bias,
-                               device=device)
-                 for idx in range(n_layers)]
+	Parameters:
 
-    model.ff_layers = ff_layers
-    model.last_layer = nn.Linear(in_features=n_neurons * n_hid_to_log, out_features=n_classes, bias=bias)
+	n_layers (int): The number of hidden layers in the neural network.
+	bias (bool): If True, use bias terms in the neural network.
+	n_classes (int): The number of classes to predict.
+	n_hid_to_log (int): The number of hidden layers to log in the output layer.
+	device (torch.device): The device to use for computations.
+	n_neurons (int): The number of neurons in each hidden layer.
+	input_size (int): The number of input features.
+	n_epochs (int): The number of epochs to train for.
 
-    model.to(device)
-    model.opt = torch.optim.Adam(model.last_layer.parameters())
-    model.loss = torch.nn.CrossEntropyLoss(reduction="mean")
-    return model
+	Returns:
+
+	nn.Module: The initialized neural network.
+	"""
+
+	model = nn.Module()
+	model.n_hid_to_log = n_hid_to_log
+	model.n_epochs = n_epochs
+	model.device = device
+
+	ff_layers = [ff_layer_init(in_features=input_size if idx == 0 else n_neurons,out_features=n_neurons, n_epochs=n_epochs, bias=bias, device=device) for idx in range(n_layers)]
+
+	model.ff_layers = ff_layers
+	model.last_layer = nn.Linear(in_features=n_neurons * n_hid_to_log, out_features=n_classes, bias=bias)
+
+	model.to(device)
+	model.opt = torch.optim.Adam(model.last_layer.parameters())
+	model.loss = torch.nn.CrossEntropyLoss(reduction="mean")
+	return model
+
+######################################################################################
 
 def train(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float) -> list[float]:
-    train_ff_layers(model, pos_dataloader, neg_dataloader, goodness_score)
-    return train_last_layer(model, pos_dataloader)
+	"""
+	Train the unsupervised feedforward neural network model.
+
+	Parameters:
+	model (nn.Module): The unsupervised feedforward neural network model.
+	pos_dataloader (DataLoader): A PyTorch DataLoader containing the positive images to be used for training.
+	neg_dataloader (DataLoader): A PyTorch DataLoader containing the negative images to be used for training.
+	goodness_score (float): The threshold to use when computing the goodness score.
+
+	Returns:
+	list[float]: A list containing the loss values for each epoch of training.
+	"""
+	train_ff_layers(model, pos_dataloader, neg_dataloader, goodness_score)
+	return train_last_layer(model, pos_dataloader)
+
+######################################################################################
 
 def train_ff_layers(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float):
-    for epoch in tqdm(range(model.n_epochs), desc = 'Training1'):
-        for pos_data, neg_imgs in zip(pos_dataloader, neg_dataloader):
-            pos_imgs, _ = pos_data
-            pos_acts = torch.reshape(pos_imgs, (pos_imgs.shape[0], 1, -1)).to(model.device)
-            neg_acts = torch.reshape(neg_imgs, (neg_imgs.shape[0], 1, -1)).to(model.device)
+	"""
+	Train the feedforward layers of the unsupervised feedforward neural network model.
 
-            for idx, layer in enumerate(model.ff_layers):
-                pos_acts = ff_forward(layer, pos_acts)
-                neg_acts = ff_forward(layer, neg_acts)
-                ff_train(layer, pos_acts, neg_acts, goodness_score)
+	Parameters:
+	model (nn.Module): The unsupervised feedforward neural network model.
+	pos_dataloader (DataLoader): A PyTorch DataLoader containing the positive images to be used for training.
+	neg_dataloader (DataLoader): A PyTorch DataLoader containing the negative images to be used for training.
+	goodness_score (float): The threshold to use when computing the goodness score.
+	"""
+	for epoch in tqdm(range(model.n_epochs), desc='Training FF Layers'):
+		for pos_data, neg_imgs in zip(pos_dataloader, neg_dataloader):
+			pos_imgs, _ = pos_data
+			pos_acts = torch.reshape(pos_imgs, (pos_imgs.shape[0], 1, -1)).to(model.device)
+			neg_acts = torch.reshape(neg_imgs, (neg_imgs.shape[0], 1, -1)).to(model.device)
+
+			for idx, layer in enumerate(model.ff_layers):
+				pos_acts = ff_forward(layer, pos_acts)
+				neg_acts = ff_forward(layer, neg_acts)
+				ff_train(layer, pos_acts, neg_acts, goodness_score)
+
+######################################################################################
 
 def train_last_layer(model: nn.Module, dataloader: DataLoader) -> list[float]:
-    loss_list = []
-    for epoch in tqdm(range(model.n_epochs), desc = 'Training2'):
-        epoch_loss = 0
-        for images, labels in dataloader:
-            images = images.to(model.device)
-            labels = labels.to(model.device)
-            model.opt.zero_grad()
-            preds = unsupervised_ff_forward(model, images)
-            loss = model.loss(preds, labels)
-            epoch_loss += loss
-            loss.backward()
-            model.opt.step()
-        loss_list.append(epoch_loss / len(dataloader))
-    return [l.detach().cpu().numpy() for l in loss_list]
+	"""
+	Train the last layer of the unsupervised feedforward neural network model.
 
-def unsupervised_ff_forward(model: nn.Module, image: torch.Tensor) -> torch.Tensor:
-    image = image.to(model.device)
-    image = torch.reshape(image, (image.shape[0], 1, -1))
-    concat_output = []
-    for idx, layer in enumerate(model.ff_layers):
-        image = ff_forward(layer, image)
-        if idx > len(model.ff_layers) - model.n_hid_to_log - 1:
-            concat_output.append(image)
-    concat_output = torch.cat(concat_output, 2)
-    logits = model.last_layer(concat_output)
-    return logits
+	Parameters:
+	model (nn.Module): The unsupervised feedforward neural network model.
+	dataloader (DataLoader): A PyTorch DataLoader containing the data to be used for training.
+
+	Returns:
+	list[float]: A list containing the loss values for each epoch of training.
+	"""
+	loss_list = []
+	for epoch in tqdm(range(model.n_epochs), desc='Training Last Layer'):
+		epoch_loss = 0
+		for images, labels in dataloader:
+			images = images.to(model.device)
+			labels = labels.to(model.device)
+			model.opt.zero_grad()
+			preds = unsupervised_ff_forward(model, images)
+			loss = model.loss(preds, labels)
+			epoch_loss += loss
+			loss.backward()
+			model.opt.step()
+		loss_list.append(epoch_loss / len(dataloader))
+	return [l.detach().cpu().numpy() for l in loss_list]
+
+######################################################################################
 
 def evaluate(model: nn.Module, dataloader: DataLoader) -> tuple[float, float]:
-    nn.Module.eval(model)
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for images, labels in dataloader:
-            images = images.to(model.device)
-            labels = labels.to(model.device)
-            outputs = unsupervised_ff_forward(model, images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+	"""
+	Evaluate the model on the test set.
 
-    return correct / total, correct
+	Parameters:
+	model (nn.Module): The unsupervised feedforward neural network model to be evaluated.
+	dataloader (DataLoader): The data loader for the test set.
 
-def unsupervised_ff_forward(model, image):
-    image = image.to(model.device)
-    image = torch.reshape(image, (image.shape[0], 1, -1))
-    concat_output = []
-    for idx, layer in enumerate(model.ff_layers):
-        image = ff_forward(layer, image)
-        if idx > len(model.ff_layers) - model.n_hid_to_log - 1:
-            concat_output.append(image)
-    concat_output = torch.cat(concat_output, 2)
-    logits = model.last_layer(concat_output)
-    return logits.squeeze()
+	Returns:
+	Tuple[float, float]: A tuple containing the accuracy of the model on the test set as a float and the number of
+	correct predictions as an integer.
+	"""
 
+	nn.Module.eval(model)
+	correct = 0
+	total = 0
+	with torch.no_grad():
+		for images, labels in dataloader:
+			images = images.to(model.device)
+			labels = labels.to(model.device)
+			outputs = unsupervised_ff_forward(model, images)
+			_, predicted = torch.max(outputs.data, 1)
+			total += labels.size(0)
+			correct += (predicted == labels).sum().item()
+
+	return correct / total, correct
+
+######################################################################################
+
+def unsupervised_ff_forward(model: nn.Module, image: torch.Tensor) -> torch.Tensor:
+	"""
+	Forward pass through the unsupervised feedforward neural network.
+
+	Parameters:
+	model (nn.Module): The unsupervised feedforward neural network model.
+	image (torch.Tensor): The input image tensor.
+
+	Returns:
+	torch.Tensor: The output tensor of the neural network.
+
+	"""
+	# Move the image tensor to the device
+	image = image.to(model.device)
+
+	# Reshape the image tensor to the correct dimensions
+	image = torch.reshape(image, (image.shape[0], 1, -1))
+
+	concat_output = []
+	for idx, layer in enumerate(model.ff_layers):
+		# Pass the input through the feedforward layer
+		image = ff_forward(layer, image)
+
+		# Store the output of the last n_hid_to_log layers
+		if idx > len(model.ff_layers) - model.n_hid_to_log - 1:
+			concat_output.append(image)
+
+	# Concatenate the outputs of the last n_hid_to_log layers
+	concat_output = torch.cat(concat_output, 2)
+
+	# Pass the concatenated output through the last layer
+	logits = model.last_layer(concat_output)
+
+	return logits.squeeze()
 
 ######################################################################################
 
 def plot_loss(loss):
-	# plot the loss over epochs
+	"""
+	Plots the loss over epochs.
+
+	Args:
+		loss (list): A list of losses for each epoch.
+
+	Returns:
+		None
+	"""
+	# Create a new figure
 	fig = plt.figure()
+
+	# Plot the loss values against the number of epochs
 	plt.plot(list(np.int_(range(len(loss)))), loss)
+
+	# Add labels for the x and y axes and a title for the plot
 	plt.xlabel("Epochs")
 	plt.ylabel("Loss")
 	plt.title("Loss Plot")
-	plt.savefig("Loss Plot.png", bbox_inches='tight', dpi = 200)
+
+	# Save the plot as an image file
+	plt.savefig("Loss Plot.png", bbox_inches='tight', dpi=200)
+
+	# Close the figure to free up memory
 	plt.close()
 
 ######################################################################################
@@ -333,6 +489,8 @@ if __name__ == '__main__':
 	loss = train(unsupervised_ff, pos_dataloader, neg_dataloader, goodness_score)
 
 	plot_loss(loss)
+
+	print()
 
 	accuracy_train, correct_train = evaluate(unsupervised_ff, pos_dataloader)
 	print(f"Train accuracy: {accuracy_train * 100:.2f}% ({correct_train} out of {len(pos_dataloader.dataset)})")
