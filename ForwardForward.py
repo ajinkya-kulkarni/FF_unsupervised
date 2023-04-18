@@ -38,7 +38,7 @@ def clean_repo():
 ######################################################################################
 
 def prepare_data():
-	
+
 	# Define the transform function
 	transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
@@ -80,7 +80,7 @@ def create_mask(shape, iterations: int = 10):
 		A binary mask with the specified shape, containing fairly large regions of ones and zeros.
 	"""
 
-	blur_filter_1 = np.array(((0, 0, 0), (0.25, 0.5, 0.25), (0, 0, 0)))
+	blur_filter_1 = np.array(((0, 0, 0), (1/4, 1/2, 1/4), (0, 0, 0)))
 	blur_filter_2 = blur_filter_1.T
 
 	# Create a random binary image
