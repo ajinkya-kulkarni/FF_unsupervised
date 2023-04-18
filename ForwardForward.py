@@ -21,23 +21,23 @@ import os
 
 os.system('cls || clear')
 
-folder_path = "MNIST"
-if os.path.exists(folder_path):
-    shutil.rmtree(folder_path)
-
-file_path = "transformed_dataset.pt"
-if os.path.exists(file_path):
-	os.remove(file_path)
-
-file_path = "Loss Plot.png"
-if os.path.exists(file_path):
-	os.remove(file_path)
-
 ######################################################################################
 
 epochs = 100
 batch_size = 64
 n_neurons = 2000
+
+######################################################################################
+
+def clean_repo():
+
+	folder_path = "MNIST"
+	if os.path.exists(folder_path):
+		shutil.rmtree(folder_path)
+
+	file_path = "transformed_dataset.pt"
+	if os.path.exists(file_path):
+		os.remove(file_path)
 
 ######################################################################################
 
@@ -305,6 +305,12 @@ def plot_loss(loss):
 
 if __name__ == '__main__':
 
+	file_path = "Loss Plot.png"
+	if os.path.exists(file_path):
+		os.remove(file_path)
+
+	clean_repo()
+
 	print()
 	
 	prepare_data()
@@ -342,6 +348,8 @@ if __name__ == '__main__':
 	unsupervised_ff.evaluate(pos_dataloader, dataset_type="Train")
 
 	unsupervised_ff.evaluate(test_dataloader, dataset_type="Test")
+
+	clean_repo()
 
 	print()
 
