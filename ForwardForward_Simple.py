@@ -19,7 +19,7 @@ os.system('cls || clear')
 
 ######################################################################################
 
-epochs = 100
+epochs = 10
 batch_size = 64
 n_neurons = 2000
 n_classes = 10
@@ -162,133 +162,121 @@ def goodness_score(pos_acts, neg_acts, threshold=2):
 ######################################################################################
 
 def get_metrics(preds, labels):
-	acc = accuracy_score(labels, preds)
-	return dict(accuracy_score=acc)
+    acc = accuracy_score(labels, preds)
+    return dict(accuracy_score=acc)
 
-######################################################################################
+def ff_layer_init(in_features, out_features, n_epochs, bias, device):
+    layer = nn.Linear(in_features, out_features, bias=bias)
+    layer.n_epochs = n_epochs
+    layer.opt = torch.optim.Adam(layer.parameters())
+    layer.goodness = goodness_score
+    layer.to(device)
+    layer.ln_layer = nn.LayerNorm(normalized_shape=[1, out_features]).to(device)
+    return layer
 
-class FF_Layer(nn.Linear):
-	def __init__(self, in_features: int, out_features: int, n_epochs: int, bias: bool, device):
-		super().__init__(in_features, out_features, bias=bias)
-		self.n_epochs = n_epochs
-		self.opt = torch.optim.Adam(self.parameters())
-		self.goodness = goodness_score
-		self.to(device)
-		self.ln_layer = nn.LayerNorm(normalized_shape=[1, out_features]).to(device)
+def ff_train(layer, pos_acts, neg_acts, goodness):
+    layer.opt.zero_grad()
+    goodness = goodness(pos_acts, neg_acts)
+    goodness.backward()
+    layer.opt.step()
 
-	def ff_train(self, pos_acts, neg_acts):
-		"""
-		Train the layer using positive and negative activations.
+def ff_forward(layer, input):
+    input = layer(input)
+    input = layer.ln_layer(input.detach())
+    return input
 
-		Parameters:
+def unsupervised_ff_init(n_layers, bias, n_classes, n_hid_to_log, device, n_neurons, input_size, n_epochs):
+    model = nn.Module()
+    model.n_hid_to_log = n_hid_to_log
+    model.n_epochs = n_epochs
+    model.device = device
 
-		pos_acts (numpy.ndarray): Numpy array of positive activations.
-		neg_acts (numpy.ndarray): Numpy array of negative activations.
-		"""
+    ff_layers = [ff_layer_init(in_features=input_size if idx == 0 else n_neurons,
+                               out_features=n_neurons,
+                               n_epochs=n_epochs,
+                               bias=bias,
+                               device=device)
+                 for idx in range(n_layers)]
 
-		self.opt.zero_grad()
-		goodness = self.goodness(pos_acts, neg_acts)
-		goodness.backward()
-		self.opt.step()
+    model.ff_layers = ff_layers
+    model.last_layer = nn.Linear(in_features=n_neurons * n_hid_to_log, out_features=n_classes, bias=bias)
 
-	def forward(self, input):
-		input = super().forward(input)
-		input = self.ln_layer(input.detach())
-		return input
+    model.to(device)
+    model.opt = torch.optim.Adam(model.last_layer.parameters())
+    model.loss = torch.nn.CrossEntropyLoss(reduction="mean")
+    return model
 
-######################################################################################
+def train(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float) -> list[float]:
+    train_ff_layers(model, pos_dataloader, neg_dataloader, goodness_score)
+    return train_last_layer(model, pos_dataloader)
 
-class Unsupervised_FF(nn.Module):
+def train_ff_layers(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float):
+    for epoch in tqdm(range(model.n_epochs), desc = 'Training1'):
+        for pos_data, neg_imgs in zip(pos_dataloader, neg_dataloader):
+            pos_imgs, _ = pos_data
+            pos_acts = torch.reshape(pos_imgs, (pos_imgs.shape[0], 1, -1)).to(model.device)
+            neg_acts = torch.reshape(neg_imgs, (neg_imgs.shape[0], 1, -1)).to(model.device)
 
-	def __init__(self, n_layers = n_layers, bias: bool = True, n_classes = n_classes, n_hid_to_log = n_hid_to_log, device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'), n_neurons = n_neurons, input_size = input_size, n_epochs = epochs):
-		super().__init__()
+            for idx, layer in enumerate(model.ff_layers):
+                pos_acts = ff_forward(layer, pos_acts)
+                neg_acts = ff_forward(layer, neg_acts)
+                ff_train(layer, pos_acts, neg_acts, goodness_score)
 
-		self.n_hid_to_log = n_hid_to_log
-		self.n_epochs = n_epochs
-		self.device = device
+def train_last_layer(model: nn.Module, dataloader: DataLoader) -> list[float]:
+    loss_list = []
+    for epoch in tqdm(range(model.n_epochs), desc = 'Training2'):
+        epoch_loss = 0
+        for images, labels in dataloader:
+            images = images.to(model.device)
+            labels = labels.to(model.device)
+            model.opt.zero_grad()
+            preds = unsupervised_ff_forward(model, images)
+            loss = model.loss(preds, labels)
+            epoch_loss += loss
+            loss.backward()
+            model.opt.step()
+        loss_list.append(epoch_loss / len(dataloader))
+    return [l.detach().cpu().numpy() for l in loss_list]
 
-		ff_layers = [
-			FF_Layer(in_features=input_size if idx == 0 else n_neurons,out_features=n_neurons, n_epochs=n_epochs, bias=bias, device=device) for idx in range(n_layers)]
+def unsupervised_ff_forward(model: nn.Module, image: torch.Tensor) -> torch.Tensor:
+    image = image.to(model.device)
+    image = torch.reshape(image, (image.shape[0], 1, -1))
+    concat_output = []
+    for idx, layer in enumerate(model.ff_layers):
+        image = ff_forward(layer, image)
+        if idx > len(model.ff_layers) - model.n_hid_to_log - 1:
+            concat_output.append(image)
+    concat_output = torch.cat(concat_output, 2)
+    logits = model.last_layer(concat_output)
+    return logits
 
-		self.ff_layers = ff_layers
-		self.last_layer = nn.Linear(in_features=n_neurons * n_hid_to_log, out_features=n_classes, bias=bias)
+def evaluate(model: nn.Module, dataloader: DataLoader) -> tuple[float, float]:
+    nn.Module.eval(model)
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for images, labels in dataloader:
+            images = images.to(model.device)
+            labels = labels.to(model.device)
+            outputs = unsupervised_ff_forward(model, images)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
 
-		self.to(device)
-		self.opt = torch.optim.Adam(self.last_layer.parameters())
-		self.loss = torch.nn.CrossEntropyLoss(reduction="mean")
+    return correct / total, correct
 
-	def train_ff_layers(self, pos_dataloader, neg_dataloader):
-		outer_tqdm = tqdm(range(self.n_epochs), desc="Training FF Layers", position=0)
-		for epoch in outer_tqdm:
-			inner_tqdm = tqdm(zip(pos_dataloader, neg_dataloader), desc=f"Training FF Layers | Epoch {epoch}", leave=False, position=1)
-			for pos_data, neg_imgs in inner_tqdm:
-				pos_imgs, _ = pos_data
-				pos_acts = torch.reshape(pos_imgs, (pos_imgs.shape[0], 1, -1)).to(self.device)
-				neg_acts = torch.reshape(neg_imgs, (neg_imgs.shape[0], 1, -1)).to(self.device)
+def unsupervised_ff_forward(model, image):
+    image = image.to(model.device)
+    image = torch.reshape(image, (image.shape[0], 1, -1))
+    concat_output = []
+    for idx, layer in enumerate(model.ff_layers):
+        image = ff_forward(layer, image)
+        if idx > len(model.ff_layers) - model.n_hid_to_log - 1:
+            concat_output.append(image)
+    concat_output = torch.cat(concat_output, 2)
+    logits = model.last_layer(concat_output)
+    return logits.squeeze()
 
-				for idx, layer in enumerate(self.ff_layers):
-					pos_acts = layer(pos_acts)
-					neg_acts = layer(neg_acts)
-					layer.ff_train(pos_acts, neg_acts)
-
-	def train_last_layer(self, dataloader: DataLoader):
-		num_examples = len(dataloader)
-		outer_tqdm = tqdm(range(self.n_epochs), desc="Training Last Layer", position=0)
-		loss_list = []
-		for epoch in outer_tqdm:
-			epoch_loss = 0
-			inner_tqdm = tqdm(dataloader, desc=f"Training Last Layer | Epoch {epoch}", leave=False, position=1)
-			for images, labels in inner_tqdm:
-				images = images.to(self.device)
-				labels = labels.to(self.device)
-				self.opt.zero_grad()
-				preds = self(images)
-				loss = self.loss(preds, labels)
-				epoch_loss += loss
-				loss.backward()
-				self.opt.step()
-			loss_list.append(epoch_loss / num_examples)
-			# Update progress bar with current loss
-		return [l.detach().cpu().numpy() for l in loss_list]
-
-	def forward(self, image: torch.Tensor):
-		image = image.to(self.device)
-		image = torch.reshape(image, (image.shape[0], 1, -1))
-		concat_output = []
-		for idx, layer in enumerate(self.ff_layers):
-			image = layer(image)
-			if idx > len(self.ff_layers) - self.n_hid_to_log - 1:
-				concat_output.append(image)
-		concat_output = torch.concat(concat_output, 2)
-		logits = self.last_layer(concat_output)
-		return logits.squeeze()
-
-	def evaluate(self, dataloader: DataLoader, dataset_type: str = "train"):
-		self.eval()
-		inner_tqdm = tqdm(dataloader, desc=f"Evaluating model", leave=False, position=1)
-
-		all_labels = []
-		all_preds = []
-		for images, labels in inner_tqdm:
-			images = images.to(self.device)
-			labels = labels.to(self.device)
-			preds = self(images)
-			preds = torch.argmax(preds, 1)
-			all_labels.append(labels.detach().cpu())
-			all_preds.append(preds.detach().cpu())
-
-		all_labels = torch.concat(all_labels, 0).numpy()
-		all_preds = torch.concat(all_preds, 0).numpy()
-		metrics_dict = get_metrics(all_preds, all_labels)
-
-		print(f"{dataset_type} dataset scores: ", "\n".join([f"{key}: {value}" for key, value in metrics_dict.items()]))
-
-######################################################################################
-
-def train(model: Unsupervised_FF, pos_dataloader: DataLoader, neg_dataloader: DataLoader):
-	model.train()
-	model.train_ff_layers(pos_dataloader, neg_dataloader)
-	return model.train_last_layer(pos_dataloader)
 
 ######################################################################################
 
@@ -340,15 +328,17 @@ if __name__ == '__main__':
 
 	device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-	unsupervised_ff = Unsupervised_FF(device=device, n_epochs=epochs)
+	unsupervised_ff = unsupervised_ff_init(n_layers=n_layers, bias=True, n_classes=n_classes, n_hid_to_log=n_hid_to_log, device=device, n_neurons=n_neurons, input_size=input_size, n_epochs=epochs)
 
-	loss = train(unsupervised_ff, pos_dataloader, neg_dataloader)
+	loss = train(unsupervised_ff, pos_dataloader, neg_dataloader, goodness_score)
 
 	plot_loss(loss)
 
-	unsupervised_ff.evaluate(pos_dataloader, dataset_type="Train")
+	accuracy_train, correct_train = evaluate(unsupervised_ff, pos_dataloader)
+	print(f"Train accuracy: {accuracy_train * 100:.2f}% ({correct_train} out of {len(pos_dataloader.dataset)})")
 
-	unsupervised_ff.evaluate(test_dataloader, dataset_type="Test")
+	accuracy_test, correct_test = evaluate(unsupervised_ff, test_dataloader)
+	print(f"Test accuracy: {accuracy_test * 100:.2f}% ({correct_test} out of {len(test_dataloader.dataset)})")
 
 	clean_repo()
 
