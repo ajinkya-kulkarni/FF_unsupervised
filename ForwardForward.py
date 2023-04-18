@@ -1,12 +1,3 @@
-import sys
-# Don't generate the __pycache__ folder locally
-sys.dont_write_bytecode = True 
-
-import torch
-import torchvision
-from torch import nn
-from torch.utils.data import DataLoader
-from torch import tensor, Tensor
 
 import numpy as np
 from sklearn.metrics import accuracy_score
@@ -14,8 +5,13 @@ from matplotlib import pyplot as plt
 from scipy.signal import convolve2d
 from tqdm.auto import tqdm
 import shutil
-
 import os
+
+import torch
+import torchvision
+from torch import nn
+from torch.utils.data import DataLoader
+from torch import tensor, Tensor
 
 ######################################################################################
 
@@ -42,6 +38,7 @@ def clean_repo():
 ######################################################################################
 
 def prepare_data():
+	
 	# Define the transform function
 	transform = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
 
