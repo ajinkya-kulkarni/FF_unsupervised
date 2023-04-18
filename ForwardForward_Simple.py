@@ -19,7 +19,7 @@ os.system('cls || clear')
 
 ######################################################################################
 
-epochs = 100
+epochs = 200
 batch_size = 64
 n_neurons = 2000
 n_classes = 10
@@ -246,9 +246,9 @@ def ff_forward(layer: nn.Module, input: Tensor) -> Tensor:
 
 ######################################################################################
 
-def unsupervised_ff_init(n_layers, bias, n_classes, n_hid_to_log, device, n_neurons, input_size, n_epochs):
+def supervised_ff_init(n_layers, bias, n_classes, n_hid_to_log, device, n_neurons, input_size, n_epochs):
 	"""
-	Initialize an unsupervised feed-forward neural network.
+	Initialize an supervised feed-forward neural network.
 
 	Parameters:
 
@@ -285,10 +285,10 @@ def unsupervised_ff_init(n_layers, bias, n_classes, n_hid_to_log, device, n_neur
 
 def train(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float) -> list[float]:
 	"""
-	Train the unsupervised feedforward neural network model.
+	Train the supervised feedforward neural network model.
 
 	Parameters:
-	model (nn.Module): The unsupervised feedforward neural network model.
+	model (nn.Module): The supervised feedforward neural network model.
 	pos_dataloader (DataLoader): A PyTorch DataLoader containing the positive images to be used for training.
 	neg_dataloader (DataLoader): A PyTorch DataLoader containing the negative images to be used for training.
 	goodness_score (float): The threshold to use when computing the goodness score.
@@ -303,10 +303,10 @@ def train(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoad
 
 def train_ff_layers(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader: DataLoader, goodness_score: float):
 	"""
-	Train the feedforward layers of the unsupervised feedforward neural network model.
+	Train the feedforward layers of the supervised feedforward neural network model.
 
 	Parameters:
-	model (nn.Module): The unsupervised feedforward neural network model.
+	model (nn.Module): The supervised feedforward neural network model.
 	pos_dataloader (DataLoader): A PyTorch DataLoader containing the positive images to be used for training.
 	neg_dataloader (DataLoader): A PyTorch DataLoader containing the negative images to be used for training.
 	goodness_score (float): The threshold to use when computing the goodness score.
@@ -326,10 +326,10 @@ def train_ff_layers(model: nn.Module, pos_dataloader: DataLoader, neg_dataloader
 
 def train_last_layer(model: nn.Module, dataloader: DataLoader) -> list[float]:
 	"""
-	Train the last layer of the unsupervised feedforward neural network model.
+	Train the last layer of the supervised feedforward neural network model.
 
 	Parameters:
-	model (nn.Module): The unsupervised feedforward neural network model.
+	model (nn.Module): The supervised feedforward neural network model.
 	dataloader (DataLoader): A PyTorch DataLoader containing the data to be used for training.
 
 	Returns:
@@ -342,7 +342,7 @@ def train_last_layer(model: nn.Module, dataloader: DataLoader) -> list[float]:
 			images = images.to(model.device)
 			labels = labels.to(model.device)
 			model.opt.zero_grad()
-			preds = unsupervised_ff_forward(model, images)
+			preds = supervised_ff_forward(model, images)
 			loss = model.loss(preds, labels)
 			epoch_loss += loss
 			loss.backward()
@@ -357,7 +357,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader) -> tuple[float, float]:
 	Evaluate the model on the test set.
 
 	Parameters:
-	model (nn.Module): The unsupervised feedforward neural network model to be evaluated.
+	model (nn.Module): The supervised feedforward neural network model to be evaluated.
 	dataloader (DataLoader): The data loader for the test set.
 
 	Returns:
@@ -372,7 +372,7 @@ def evaluate(model: nn.Module, dataloader: DataLoader) -> tuple[float, float]:
 		for images, labels in dataloader:
 			images = images.to(model.device)
 			labels = labels.to(model.device)
-			outputs = unsupervised_ff_forward(model, images)
+			outputs = supervised_ff_forward(model, images)
 			_, predicted = torch.max(outputs.data, 1)
 			total += labels.size(0)
 			correct += (predicted == labels).sum().item()
@@ -381,12 +381,12 @@ def evaluate(model: nn.Module, dataloader: DataLoader) -> tuple[float, float]:
 
 ######################################################################################
 
-def unsupervised_ff_forward(model: nn.Module, image: torch.Tensor) -> torch.Tensor:
+def supervised_ff_forward(model: nn.Module, image: torch.Tensor) -> torch.Tensor:
 	"""
-	Forward pass through the unsupervised feedforward neural network.
+	Forward pass through the supervised feedforward neural network.
 
 	Parameters:
-	model (nn.Module): The unsupervised feedforward neural network model.
+	model (nn.Module): The supervised feedforward neural network model.
 	image (torch.Tensor): The input image tensor.
 
 	Returns:
@@ -481,18 +481,18 @@ if __name__ == '__main__':
 	# Create the data loader
 	test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
 
-	unsupervised_ff = unsupervised_ff_init(n_layers=n_layers, bias=True, n_classes=n_classes, n_hid_to_log=n_hid_to_log, device=device, n_neurons=n_neurons, input_size=input_size, n_epochs=epochs)
+	supervised_ff = supervised_ff_init(n_layers=n_layers, bias=True, n_classes=n_classes, n_hid_to_log=n_hid_to_log, device=device, n_neurons=n_neurons, input_size=input_size, n_epochs=epochs)
 
-	loss = train(unsupervised_ff, pos_dataloader, neg_dataloader, goodness_score)
+	loss = train(supervised_ff, pos_dataloader, neg_dataloader, goodness_score)
 
 	plot_loss(loss)
 
 	print()
 
-	accuracy_train, correct_train = evaluate(unsupervised_ff, pos_dataloader)
+	accuracy_train, correct_train = evaluate(supervised_ff, pos_dataloader)
 	print(f"Train accuracy: {accuracy_train * 100:.2f}% ({correct_train} out of {len(pos_dataloader.dataset)})")
 
-	accuracy_test, correct_test = evaluate(unsupervised_ff, test_dataloader)
+	accuracy_test, correct_test = evaluate(supervised_ff, test_dataloader)
 	print(f"Test accuracy: {accuracy_test * 100:.2f}% ({correct_test} out of {len(test_dataloader.dataset)})")
 
 	clean_repo()

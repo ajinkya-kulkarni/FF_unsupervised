@@ -1,2 +1,3 @@
 MNIST/*
 transformed_dataset.pt
+.DS_Store
