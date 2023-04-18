@@ -63,10 +63,7 @@ def prepare_data():
 		random_pairs = [(row[0], row[1]) for row in random_pairs]
 
 		# Transform the data
-		transformed_dataset = [
-			create_negative_image(train_mnist_dataset[pair[0]][0].squeeze(), train_mnist_dataset[pair[1]][0].squeeze())
-			for pair in tqdm(random_pairs, desc='Preparing Dataset')
-		]
+		transformed_dataset = [create_negative_image(train_mnist_dataset[pair[0]][0].squeeze(), train_mnist_dataset[pair[1]][0].squeeze()) for pair in tqdm(random_pairs, desc='Preparing Dataset')]
 
 		# Save the transformed images to a file
 		torch.save(transformed_dataset, 'transformed_dataset.pt')
