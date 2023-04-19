@@ -1,3 +1,5 @@
 MNIST/*
 transformed_dataset.pt
 .DS_Store
+MNIST_data/*
+CIFAR10_data/*
